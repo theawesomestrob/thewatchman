@@ -44,7 +44,7 @@ def get_val(
             val = options[section][key]
         except KeyError:
             _LOGGER.error(
-                "Key %s is missing in secion %s, return default value", key, section
+                "Key %s is missing in section %s, return default value", key, section
             )
             val = DEFAULT_OPTIONS[section][key]
     else:
@@ -129,7 +129,7 @@ def is_action(hass, entry):
     """check whether config entry is an action"""
     if not isinstance(entry, str):
         return False
-    domain, service = entry.split(".")[0], ".".join(entry.split(".")[1:])
+    domain, service = entry.split(".", 1)
     return hass.services.has_service(domain, service)
 
 

@@ -44,6 +44,26 @@ async def parsing_stats(hass, start_time):
     )
 
 
+def report_section(
+    hass, render, report_type, *, singular, plural, num_total, num_missing
+):
+    result = []
+    if not num_total:
+        result = [f"-== No {plural} found in configuration files!"]
+    else:
+        if num_missing > 0:
+            name = singular if num_missing == 1 else plural
+            result = [
+                f"-== Missing {num_missing} {name} from {num_total} found in your config:"
+            ] + render(hass, report_type).splitlines()
+        else:
+            name = singular if num_missing == 1 else plural
+            result = [
+                f"-== Congratulations, all {num_total} {name} from your config are available!"
+            ]
+    return result
+
+
 async def report(hass, render, chunk_size):
     """generates watchman report either as a table or as a list"""
     if DOMAIN not in hass.data:
@@ -58,29 +78,28 @@ async def report(hass, render, chunk_size):
     files_parsed = hass.data[DOMAIN][HASS_DATA_FILES_PARSED]
     files_ignored = hass.data[DOMAIN][HASS_DATA_FILES_IGNORED]
 
-    rep = f"{header} \n"
-    if services_missing:
-        rep += f"\n-== Missing {len(services_missing)} action(s) from "
-        rep += f"{len(service_list)} found in your config:\n"
-        rep += render(hass, REPORT_ENTRY_TYPE_SERVICE)
-        rep += "\n"
-    elif len(service_list) > 0:
-        rep += f"\n-== Congratulations, all {len(service_list)} actions from "
-        rep += "your config are available!\n"
-    else:
-        rep += "\n-== No actions found in configuration files!\n"
+    report = [header, ""]
 
-    if entities_missing:
-        rep += f"\n-== Missing {len(entities_missing)} entity(ies) from "
-        rep += f"{len(entity_list)} found in your config:\n"
-        rep += render(hass, REPORT_ENTRY_TYPE_ENTITY)
-        rep += "\n"
+    report += report_section(
+        hass,
+        render,
+        REPORT_ENTRY_TYPE_SERVICE,
+        singular="action",
+        plural="actions",
+        num_total=len(service_list),
+        num_missing=len(services_missing),
+    )
 
-    elif len(entity_list) > 0:
-        rep += f"\n-== Congratulations, all {len(entity_list)} entities from "
-        rep += "your config are available!\n"
-    else:
-        rep += "\n-== No entities found in configuration files!\n"
+    report.append("")
+    report += report_section(
+        hass,
+        render,
+        REPORT_ENTRY_TYPE_ENTITY,
+        singular="entity",
+        plural="entities",
+        num_total=len(entity_list),
+        num_missing=len(entities_missing),
+    )
 
     (
         report_datetime,
@@ -89,22 +108,36 @@ async def report(hass, render, chunk_size):
         render_duration,
     ) = await parsing_stats(hass, start_time)
 
-    rep += f"\n-== Report created on {report_datetime}\n"
-    rep += (
-        f"-== Parsed {files_parsed} files in {parse_duration:.2f}s., "
-        f"ignored {files_ignored} files \n"
-    )
-    rep += f"-== Generated in: {render_duration:.2f}s. Validated in: {check_duration:.2f}s."
+    report += [
+        "",
+        f"-== Report created on {report_datetime}",
+        f"-== Parsed {files_parsed} files in {parse_duration:.2f}s., ignored {files_ignored} files",
+        f"-== Generated in: {render_duration:.2f}s. Validated in: {check_duration:.2f}s.",
+        "",
+    ]
+
     report_chunks = []
-    chunk = ""
-    for line in iter(rep.splitlines()):
-        chunk += f"{line}\n"
-        if chunk_size > 0 and len(chunk) > chunk_size:
-            report_chunks.append(chunk)
-            chunk = ""
-    if chunk:
-        report_chunks.append(chunk)
+    if chunk_size > 0:
+        report_chunks = split_chunks(report, chunk_size)
+    else:
+        report_chunks = [report]
+
+    report_chunks = ["\n".join(chunk) for chunk in report_chunks]
     return report_chunks
+
+
+def split_chunks(lines, chunk_size):
+    chunk = []
+    total_len = 0
+    for line in lines:
+        chunk.append(line)
+        total_len += len(line)
+        if total_len >= chunk_size:
+            yield chunk
+            chunk = []
+            total_len = 0
+    if chunk:
+        yield chunk
 
 
 def table_renderer(hass, entry_type):
@@ -133,9 +166,10 @@ def table_renderer(hass, entry_type):
         table.field_names = header
         for entity in entities_missing:
             state, name = get_entity_state(hass, entity, friendly_names)
+            label = f"{entity} ({name})" if name else str(entity)
             table.add_row(
                 [
-                    fill(entity, columns_width[0], name),
+                    fill(label, columns_width[0]),
                     fill(state, columns_width[1]),
                     fill(parsed_entity_list[entity], columns_width[2]),
                 ]
@@ -171,17 +205,25 @@ def text_renderer(hass, entry_type):
         return f"Text render error: unknown entry type: {entry_type}"
 
 
-def fill(data, width, extra=None):
-    """arrange data by table column width"""
-    if data and isinstance(data, dict):
-        key, val = next(iter(data.items()))
-        out = f"{key}:{','.join([str(v) for v in val])}"
-    else:
-        out = str(data) if not extra else f"{data} ('{extra}')"
+def file_locations(locations):
+    return [
+        file + ":" + ",".join(str(n) for n in line_numbers)
+        for (file, line_numbers) in locations.items()
+    ]
 
-    return (
-        "\n".join([out.ljust(width) for out in wrap(out, width)]) if width > 0 else out
-    )
+
+def fill(data, width):
+    """arrange data by table column width"""
+    lines = file_locations(data) if isinstance(data, dict) else [str(data)]
+
+    if width > 0:
+        lines = [
+            wrapped_line.ljust(width)
+            for line in lines
+            for wrapped_line in wrap(line, width)
+        ]
+
+    return "\n".join(lines)
 
 
 def get_columns_width(user_width):

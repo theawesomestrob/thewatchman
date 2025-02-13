@@ -14,3 +14,4 @@ pytest-cov>=3.0
 pytest-homeassistant-custom-component>=0.13
 tzdata
 ruff>=0.4
+josepy<2.0

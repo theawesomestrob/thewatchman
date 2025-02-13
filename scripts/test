@@ -4,4 +4,4 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-python3 -m pytest -x tests
+python3 -m pytest tests "$@"
